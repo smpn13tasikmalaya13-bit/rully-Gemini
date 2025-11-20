@@ -1409,7 +1409,7 @@ const AdminDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user, 
                 {view === 'eskulSchedules' && <AdminEskulScheduleManagement />}
                 {view === 'reports' && <AttendanceReport />}
                 {view === 'studentAbsences' && <StudentAbsenceReport />}
-                {view === 'announcements' && <AdminAnnouncements />}
+                {view === 'announcements' && <AdminAnnouncements adminUser={user} />}
                 <footer className="text-center text-sm text-gray-500 pt-8 pb-2">
                     © 2025 Rullp. All rights reserved.
                 </footer>
@@ -3153,23 +3153,62 @@ const App: React.FC = () => {
 };
 
 // --- Admin Announcements Component ---
-const AdminAnnouncements: React.FC = () => {
+const AdminAnnouncements: React.FC<{ adminUser?: User }> = ({ adminUser }) => {
     const [announcements, setAnnouncements] = useState<import('./types').Announcement[]>([]);
     const [title, setTitle] = useState('');
     const [content, setContent] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+    const [checkingAdmin, setCheckingAdmin] = useState(false);
 
     useEffect(() => {
         let unsub = api.onAnnouncementsChange(setAnnouncements);
         return () => { try { unsub(); } catch (e) {} };
     }, []);
 
+    // Verify that the current user is an admin before allowing create/delete
+    useEffect(() => {
+        const check = async () => {
+            setCheckingAdmin(true);
+            try {
+                // If adminUser prop exists and has role, trust it
+                if (adminUser && adminUser.role) {
+                    setIsAdmin(adminUser.role === UserRoleEnum.ADMIN);
+                    return;
+                }
+
+                // Otherwise try to derive from auth.currentUser -> get user profile
+                const currentUid = (typeof window !== 'undefined' && (window as any).firebase && (window as any).firebase.auth().currentUser)
+                    ? (window as any).firebase.auth().currentUser.uid
+                    : undefined;
+
+                if (!currentUid) {
+                    setIsAdmin(false);
+                    return;
+                }
+
+                const profile = await api.getUser(currentUid);
+                setIsAdmin(!!profile && profile.role === UserRoleEnum.ADMIN);
+            } catch (err) {
+                console.error('Gagal memverifikasi peran admin:', err);
+                setIsAdmin(false);
+            } finally {
+                setCheckingAdmin(false);
+            }
+        };
+        check();
+    }, [adminUser]);
+
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!title.trim() || !content.trim()) return alert('Judul dan isi wajib diisi.');
+        if (checkingAdmin) return alert('Menunggu verifikasi peran admin...');
+        if (!isAdmin) return alert('Anda tidak memiliki izin untuk menambah pengumuman. Hanya admin yang dapat melakukan ini.');
         setIsSaving(true);
         try {
-            await api.addAnnouncement({ title: title.trim(), content: content.trim(), authorId: undefined, active: true });
+            const payload: any = { title: title.trim(), content: content.trim(), active: true };
+            if (adminUser && adminUser.id) payload.authorId = adminUser.id;
+            await api.addAnnouncement(payload);
             setTitle(''); setContent('');
         } catch (error: any) {
             console.error('Gagal menambah pengumuman:', error);
