@@ -1,1 +1,25 @@
-��^��ޮȨ
+rules_version = '2';
+
+service cloud.firestore {
+	match /databases/{database}/documents {
+
+		// Announcements: anyone authenticated can read; only ADMIN users may create/update/delete
+		match /announcements/{announcementId} {
+			allow read: if request.auth != null;
+			allow create, update, delete: if request.auth != null &&
+				get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+		}
+
+		// Users read for profile purposes (authenticated), writes restricted to server-side flows / admin
+		match /users/{userId} {
+			allow read: if request.auth != null && request.auth.uid == userId;
+			allow write: if false; // managed by server or cloud functions / admin actions
+		}
+
+		// Default: allow read for authenticated users, deny writes unless matched above
+		match /{document=**} {
+			allow read: if request.auth != null;
+			allow write: if false;
+		}
+	}
+}
