@@ -724,3 +724,38 @@ export const getAllStudentAbsenceRecords = async (): Promise<StudentAbsenceRecor
     const snapshot = await db.collection('studentAbsenceRecords').orderBy('timestamp', 'desc').get();
     return collectionToData<StudentAbsenceRecord>(snapshot);
 };
+
+// --- Announcements Functions ---
+export const addAnnouncement = async (announcementData: Omit<import('../types').Announcement, 'id' | 'timestamp'>): Promise<void> => {
+    const dataToSave = {
+        ...announcementData,
+        timestamp: new Date().toISOString(),
+        active: announcementData.active === undefined ? true : announcementData.active,
+    } as any;
+    await db.collection('announcements').add(dataToSave);
+};
+
+export const getAnnouncements = async (): Promise<import('../types').Announcement[]> => {
+    const snapshot = await db.collection('announcements').orderBy('timestamp', 'desc').get();
+    return collectionToData<import('../types').Announcement>(snapshot);
+};
+
+export const onAnnouncementsChange = (callback: (ann: import('../types').Announcement[]) => void): (() => void) => {
+    try {
+        const unsubscribe = db.collection('announcements').orderBy('timestamp', 'desc').onSnapshot((snapshot: any) => {
+            const items = collectionToData<import('../types').Announcement>(snapshot);
+            callback(items);
+        }, (error: any) => {
+            console.error('Error listening to announcements:', error);
+            callback([]);
+        });
+        return unsubscribe;
+    } catch (error: any) {
+        console.error('Error setting up announcements listener:', error);
+        return () => {};
+    }
+};
+
+export const deleteAnnouncement = async (id: string): Promise<void> => {
+    await db.collection('announcements').doc(id).delete();
+};

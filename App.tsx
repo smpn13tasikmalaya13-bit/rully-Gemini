@@ -310,6 +310,7 @@ const StudentAbsenceModal: React.FC<{
 };
 
 const TeacherDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user, onLogout }) => {
+    const [announcements, setAnnouncements] = useState<import('./types').Announcement[]>([]);
     const [isScanning, setIsScanning] = useState(false);
     const [schedules, setSchedules] = useState<Schedule[]>([]);
     const [classes, setClasses] = useState<Class[]>([]);
@@ -340,6 +341,8 @@ const TeacherDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user
             api.getAttendanceRecordsForTeacher(user.id),
             api.getAbsenceRecordForTeacherOnDate(user.id, todayString),
             api.getStudentAbsenceRecordsForTeacherOnDate(user.id, todayString)
+            ,
+            api.getAnnouncements()
         ]);
 
         const [classesResult, schedulesResult, attendanceResult, absenceResult, studentAbsenceResult] = results;
@@ -359,6 +362,12 @@ const TeacherDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user
         if (studentAbsenceResult.status === 'fulfilled') setStudentAbsences(studentAbsenceResult.value);
         else console.error("Gagal memuat laporan siswa absen:", studentAbsenceResult.reason);
 
+        if (results[5] && (results[5] as PromiseSettledResult<import('./types').Announcement[]>).status === 'fulfilled') {
+            setAnnouncements((results[5] as PromiseSettledResult<import('./types').Announcement[]>).value);
+        } else {
+            console.error('Gagal memuat pengumuman:', (results[5] as any)?.reason);
+        }
+
         setLoadingData(false);
     }, [user.id]);
 
@@ -366,7 +375,11 @@ const TeacherDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user
     useEffect(() => {
         fetchData();
         const unsubscribeMessages = api.onMessagesReceived(user.id, setMessages);
-        return () => unsubscribeMessages();
+        const unsubscribeAnnouncements = api.onAnnouncementsChange(setAnnouncements);
+        return () => {
+            try { unsubscribeMessages(); } catch (e) {}
+            try { unsubscribeAnnouncements(); } catch (e) {}
+        };
     }, [fetchData, user.id]);
 
     useEffect(() => {
@@ -518,6 +531,17 @@ const TeacherDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user
             </header>
 
             <main className="p-4 md:p-6 space-y-6">
+                {announcements.length > 0 && (
+                    <div className="space-y-2">
+                        {announcements.filter(a => a.active !== false).map(a => (
+                            <div key={a.id} className="bg-blue-800 border border-blue-700 p-4 rounded-lg">
+                                <h3 className="font-semibold">{a.title}</h3>
+                                <p className="text-sm text-gray-200 mt-1">{a.content}</p>
+                                <p className="text-xs text-gray-400 mt-2">{new Date(a.timestamp).toLocaleString()}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
                 {scanResult && (
                     <div className={`p-4 rounded-md mb-6 shadow-lg ${scanResult.type === 'success' ? 'bg-green-900 bg-opacity-50 text-green-300 border border-green-700' : 'bg-red-900 bg-opacity-50 text-red-300 border border-red-700'}`}>
                         <p className="font-medium">{scanResult.type === 'success' ? 'Berhasil!' : 'Gagal'}</p>
@@ -1324,6 +1348,7 @@ const AdminDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user, 
         eskulSchedules: 'Jadwal Ekstrakurikuler',
         reports: 'Laporan Absensi',
         studentAbsences: 'Laporan Siswa Absen',
+        announcements: 'Pengumuman',
     };
 
     return (
@@ -1354,6 +1379,7 @@ const AdminDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user, 
                     <a onClick={() => handleSetView('eskulSchedules')} className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 cursor-pointer">Jadwal Ekstrakurikuler</a>
                     <a onClick={() => handleSetView('reports')} className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 cursor-pointer">Laporan Absensi Guru</a>
                     <a onClick={() => handleSetView('studentAbsences')} className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 cursor-pointer">Laporan Siswa Absen</a>
+                    <a onClick={() => handleSetView('announcements')} className="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 cursor-pointer">Pengumuman</a>
                 </nav>
                 <div className="p-4 border-t border-gray-700">
                     <p className="text-white">{user.name}</p>
@@ -1383,6 +1409,7 @@ const AdminDashboard: React.FC<{ user: User; onLogout: () => void }> = ({ user, 
                 {view === 'eskulSchedules' && <AdminEskulScheduleManagement />}
                 {view === 'reports' && <AttendanceReport />}
                 {view === 'studentAbsences' && <StudentAbsenceReport />}
+                {view === 'announcements' && <AdminAnnouncements />}
                 <footer className="text-center text-sm text-gray-500 pt-8 pb-2">
                     © 2025 Rullp. All rights reserved.
                 </footer>
@@ -3123,6 +3150,79 @@ const App: React.FC = () => {
 
     // Fallback for unknown roles
     return <div>Peran pengguna tidak dikenali.</div>;
+};
+
+// --- Admin Announcements Component ---
+const AdminAnnouncements: React.FC = () => {
+    const [announcements, setAnnouncements] = useState<import('./types').Announcement[]>([]);
+    const [title, setTitle] = useState('');
+    const [content, setContent] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        let unsub = api.onAnnouncementsChange(setAnnouncements);
+        return () => { try { unsub(); } catch (e) {} };
+    }, []);
+
+    const handleCreate = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!title.trim() || !content.trim()) return alert('Judul dan isi wajib diisi.');
+        setIsSaving(true);
+        try {
+            await api.addAnnouncement({ title: title.trim(), content: content.trim(), authorId: undefined, active: true });
+            setTitle(''); setContent('');
+        } catch (error: any) {
+            console.error('Gagal menambah pengumuman:', error);
+            alert(`Gagal menambah pengumuman: ${error.message || error}`);
+        } finally { setIsSaving(false); }
+    };
+
+    const handleDelete = async (id: string) => {
+        if (!window.confirm('Hapus pengumuman ini?')) return;
+        try {
+            await api.deleteAnnouncement(id);
+        } catch (error: any) {
+            console.error('Gagal menghapus pengumuman:', error);
+            alert(`Gagal menghapus: ${error.message || error}`);
+        }
+    };
+
+    return (
+        <div>
+            <h2 className="text-2xl font-semibold mb-4">Kelola Pengumuman</h2>
+            <form onSubmit={handleCreate} className="space-y-3 mb-6">
+                <div>
+                    <label className="text-sm text-gray-300 block mb-1">Judul</label>
+                    <input value={title} onChange={e => setTitle(e.target.value)} className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white" />
+                </div>
+                <div>
+                    <label className="text-sm text-gray-300 block mb-1">Isi</label>
+                    <textarea value={content} onChange={e => setContent(e.target.value)} className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white" rows={4} />
+                </div>
+                <div className="flex gap-3">
+                    <button type="submit" disabled={isSaving} className="bg-green-600 px-4 py-2 rounded font-bold hover:bg-green-700">{isSaving ? 'Menyimpan...' : 'Tambah Pengumuman'}</button>
+                </div>
+            </form>
+
+            <div className="space-y-3">
+                {announcements.length === 0 && <p className="text-gray-400">Belum ada pengumuman.</p>}
+                {announcements.map(a => (
+                    <div key={a.id} className="bg-gray-800 border border-gray-700 p-3 rounded">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <h3 className="font-semibold">{a.title}</h3>
+                                <p className="text-sm text-gray-300">{a.content}</p>
+                                <p className="text-xs text-gray-500 mt-1">{new Date(a.timestamp).toLocaleString()}</p>
+                            </div>
+                            <div className="flex flex-col gap-2 ml-4">
+                                <button onClick={() => handleDelete(a.id)} className="text-sm text-red-400 hover:underline">Hapus</button>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 };
 
 export default App;

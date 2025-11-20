@@ -104,3 +104,12 @@ export interface StudentAbsenceRecord {
   date: string; // YYYY-MM-DD
   timestamp: string; // ISO string
 }
+
+export interface Announcement {
+  id: string;
+  title: string;
+  content: string;
+  authorId?: string;
+  timestamp: string; // ISO string
+  active?: boolean;
+}
