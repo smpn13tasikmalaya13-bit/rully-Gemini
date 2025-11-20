@@ -3,17 +3,37 @@ rules_version = '2';
 service cloud.firestore {
 	match /databases/{database}/documents {
 
-		// Announcements: anyone authenticated can read; only ADMIN users may create/update/delete
-		match /announcements/{announcementId} {
-			allow read: if request.auth != null;
-			allow create, update, delete: if request.auth != null &&
-				get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+
+		// --- Helper functions ---
+		function isAuthenticated() {
+			return request.auth != null;
 		}
 
-		// Users read for profile purposes (authenticated), writes restricted to server-side flows / admin
+		function isOwner(userId) {
+			return request.auth != null && request.auth.uid == userId;
+		}
+
+		function isAdmin() {
+			return isAuthenticated()
+				&& exists(/databases/$(database)/documents/users/$(request.auth.uid))
+				&& get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+		}
+
+		// Announcements: public read; only ADMIN may create/update/delete
+		match /announcements/{announcementId} {
+			allow read: if true;
+			allow create, update, delete: if isAdmin();
+		}
+
+		// Users (profiles)
 		match /users/{userId} {
-			allow read: if request.auth != null && request.auth.uid == userId;
-			allow write: if false; // managed by server or cloud functions / admin actions
+			// Creation allowed if the authenticated user is creating their own profile,
+			// or if an ADMIN creates a profile for another user (admin provisioning).
+			allow create: if isOwner(userId) || isAdmin();
+
+			// Owner or admin may read/update the profile. Only admin can delete.
+			allow read, update: if isOwner(userId) || isAdmin();
+			allow delete: if isAdmin();
 		}
 
 		// Default: allow read for authenticated users, deny writes unless matched above
